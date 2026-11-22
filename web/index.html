@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Short Maker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='9' y='2' width='14' height='28' rx='3' fill='%23ffb020'/><rect x='11' y='12' width='10' height='6' fill='%23111'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;600&family=Montserrat:wght@600;700;800;900&family=Anton&family=Bebas+Neue&family=Archivo+Black&family=DM+Serif+Display&family=Playfair+Display:wght@700;900&family=Poppins:wght@600;800&family=Space+Mono:wght@700&family=Oswald:wght@600;700&family=Syne:wght@800&family=Caveat:wght@700&family=Rubik+Mono+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="brandmark" id="goHome" title="All videos">
+    <span class="mark"><i></i></span>
+    <span class="word">SHORT<b>/</b>MAKER</span>
+  </button>
+  <div class="crumb" id="crumb"></div>
+  <nav class="topnav">
+    <button class="ghost" id="openBrand">Channel &amp; links</button>
+    <button class="ghost" id="openSettings">AI &amp; settings</button>
+    <button class="accent-btn" id="toggleChat"><span class="dot"></span>AI chat</button>
+  </nav>
+</header>
+
+<!-- HOME -->
+<main id="home" class="view">
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="kicker">16:9 in &rarr; 9:16 out</p>
+      <h1>Cut your long video into <em>shorts</em>.</h1>
+      <p class="sub">YouTube Shorts, Instagram Reels and TikTok, from one upload. Pick moments yourself or let the AI find them, drop the video into a template, render.</p>
+    </div>
+    <label class="drop" id="drop">
+      <input type="file" id="fileInput" accept="video/*,.mkv" hidden>
+      <div class="drop-inner">
+        <div class="drop-icon"><span></span><span></span></div>
+        <strong>Drop a video here</strong>
+        <span>or click to choose &middot; mp4, mov, mkv, webm</span>
+        <div class="upbar" id="upbar" hidden><i></i><em></em></div>
+      </div>
+    </label>
+  </section>
+  <section class="projects">
+    <h2>Your videos</h2>
+    <div class="grid" id="projectGrid"></div>
+  </section>
+</main>
+
+<!-- EDITOR -->
+<main id="editor" class="view" hidden>
+  <div class="clipstrip">
+    <div class="strip-label">Shorts</div>
+    <div class="clips" id="clipList"></div>
+    <button class="chip" id="newClip">+ New short</button>
+    <button class="chip ai" id="aiSuggest">&#10022; AI: find best moments</button>
+    <button class="chip" id="renderAll">Render all</button>
+  </div>
+
+  <div class="workspace">
+    <!-- SOURCE -->
+    <section class="panel source">
+      <div class="panel-head"><h3>Source</h3><span class="mono dim" id="srcMeta"></span></div>
+      <div class="player">
+        <video id="video" preload="auto" playsinline></video>
+        <div class="player-msg" id="playerMsg" hidden></div>
+      </div>
+      <div class="transport">
+        <button class="icon" id="playBtn" title="Play / pause (space)">&#9654;</button>
+        <span class="mono tc" id="tc">00:00.0</span>
+        <span class="spacer"></span>
+        <button class="small" id="setIn" title="Set start of selected short here (I)">[ Start here</button>
+        <button class="small" id="setOut" title="Set end of selected short here (O)">End here ]</button>
+      </div>
+      <div class="timeline" id="timeline"><div class="tl-clips" id="tlClips"></div><div class="playhead" id="playhead"></div></div>
+      <div class="panel-head transcript-head">
+        <div class="srctabs" id="srcTabs"><button data-src="transcript" class="on">Transcript</button><button data-src="lyrics">My lyrics <span class="mono dim" id="lyCount"></span></button></div>
+        <input class="search" id="trSearch" placeholder="Search words&hellip;">
+        <button class="small" id="transcribeBtn">Transcribe</button>
+      </div>
+      <div class="transcript" id="transcript"></div>
+      <div class="lyrics" id="lyrics" hidden>
+        <div class="ly-tools">
+          <button class="accent-btn" id="lyAuto" title="Listen to the song with Whisper and time every line for you">&#10022; Auto-sync</button>
+          <button class="small" id="lySync">&#9679; Tap to sync</button>
+          <button class="small" id="lyPaste">Paste / edit text</button>
+          <button class="small" id="lyImport">Import .lrc / .srt</button>
+          <button class="small" id="lyExport">Export .lrc</button>
+          <input type="file" id="lyFile" accept=".lrc,.srt,.txt,.vtt" hidden>
+        </div>
+        <div class="ly-autobar" id="lyAutoBar" hidden><span class="spin"></span><div><b>Listening to the song&hellip;</b> Whisper is matching your lines to the audio. This takes about a minute per few minutes of video.</div></div>
+        <div class="ly-syncbar" id="lySyncBar" hidden>
+          <div><b>Syncing.</b> Press <kbd>Space</kbd> (or TAP) the moment each line starts. <kbd>&#9003;</kbd> undo &middot; <kbd>Esc</kbd> stop</div>
+          <button class="accent-btn" id="lyTap">TAP</button>
+        </div>
+        <div class="ly-paste" id="lyPasteBox" hidden>
+          <textarea id="lyText" dir="auto" rows="12" placeholder="Paste your lyrics here, one line per caption.&#10;Empty lines are skipped."></textarea>
+          <p class="hint">Lines you didn't change keep their timing. New lines need syncing.</p>
+          <div class="row"><button class="accent-btn" id="lyApply">Use these lines</button><button class="small" id="lyCancel">Cancel</button></div>
+        </div>
+        <div class="ly-list" id="lyList"></div>
+      </div>
+    </section>
+
+    <!-- PREVIEW -->
+    <section class="panel stage">
+      <div class="stage-top">
+        <div class="seg" id="safeSeg">
+          <button data-safe="none" class="on">No guides</button>
+          <button data-safe="youtube">Shorts</button>
+          <button data-safe="instagram">Reels</button>
+          <button data-safe="tiktok">TikTok</button>
+        </div>
+        <div class="seg applyseg" id="applySeg" title="Where your moves and template changes go" hidden><span>Edits:</span><button data-v="all" class="on">All shorts</button><button data-v="one">This short</button></div>
+      </div>
+      <div class="phone"><canvas id="preview" width="1080" height="1920"></canvas><div class="safe" id="safe"></div><div class="editlayer" id="editLayer"></div><div class="empty-stage" id="emptyStage">Make a short to see it here</div></div>
+      <div class="cliptimes" id="clipTimes">
+        <label>Start <input class="mono" id="cStart"></label>
+        <button class="icon" id="playClip" title="Play this short">&#9654;</button>
+        <label>End <input class="mono" id="cEnd"></label>
+        <span class="mono dim" id="cDur"></span>
+      </div>
+      <div class="renderbox" id="renderBox">
+        <button class="accent-btn wide" id="renderBtn">Render short</button>
+        <div class="rstatus" id="rStatus"></div>
+        <div class="savedir" id="saveDir"></div>
+      </div>
+    </section>
+
+    <!-- INSPECTOR -->
+    <section class="panel inspector">
+      <div class="tabs" id="tabs">
+        <button data-tab="short" class="on">Short</button>
+        <button data-tab="design">Template</button>
+        <button data-tab="post">Post text</button>
+      </div>
+      <div class="tab" data-tab="short">
+        <label class="field">Title on the short
+          <textarea id="cTitle" rows="2" placeholder="Short punchy hook&hellip;"></textarea>
+        </label>
+        <label class="toggle"><input type="checkbox" id="cCaptions" checked><span></span>Burn in captions <em class="dim" id="capNote"></em></label>
+        <div class="seg capsrc" id="capSrc"><button data-v="transcript" class="on">From transcript</button><button data-v="lyrics">From my lyrics</button></div>
+        <details class="capedit" id="capEdit" hidden>
+          <summary>Edit caption text <span class="dim mono" id="capCount"></span></summary>
+          <p class="hint">Fix words Whisper got wrong. Press Enter or click away to save. Clear a line to remove that caption. Fixes apply to the transcript, so every short gets them.</p>
+          <div class="caplist" id="capList"></div>
+        </details>
+        <div class="field-row">
+          <h4>Templates</h4>
+          <button class="small" id="uploadBgBtn" title="Make a template from your own background image">Upload background</button>
+          <button class="small" id="importTplBtn" title="Import a template .json">Import</button>
+          <input type="file" id="bgFile" accept="image/*" hidden><input type="file" id="tplFile" accept=".json,application/json" hidden>
+        </div>
+        <div class="tplgrid" id="tplGrid"></div>
+      </div>
+      <div class="tab" data-tab="design" hidden>
+        <p class="hint">Change the current template, then save it as your own. Built-in templates stay untouched. Changes go to <b>all shorts</b> or <b>this short</b>, following the "Edits" switch above the preview.</p>
+        <div id="designForm"></div>
+        <div class="design-actions">
+          <input id="tplName" placeholder="Template name">
+          <button class="accent-btn" id="saveTpl">Save as new template</button>
+          <button class="small" id="updateTpl" hidden>Update this template</button>
+          <button class="small" id="exportTpl">Export .json</button>
+          <button class="small danger" id="deleteTpl" hidden>Delete</button>
+          <button class="small" id="resetTpl">Discard changes</button>
+        </div>
+      </div>
+      <div class="tab" data-tab="post" hidden>
+        <p class="hint">Text to paste when you upload. <button class="link" id="aiCopy">&#10022; Write with AI</button></p>
+        <div id="postForm"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- CHAT -->
+<aside class="chat" id="chat" hidden>
+  <div class="chat-head">
+    <div><strong>Assistant</strong><span class="mono dim" id="chatModel"></span></div>
+    <button class="icon" id="closeChat">&times;</button>
+  </div>
+  <div class="chat-log" id="chatLog"></div>
+  <div class="chat-quick" id="chatQuick">
+    <button>Find the 5 best moments for shorts</button>
+    <button>Give this short a better hook title</button>
+    <button>Write post text for all 3 platforms</button>
+    <button>Pick the best template for this video</button>
+  </div>
+  <form class="chat-input" id="chatForm">
+    <textarea id="chatText" rows="2" placeholder="Ask or tell it what to change&hellip;"></textarea>
+    <button class="accent-btn" type="submit">Send</button>
+  </form>
+</aside>
+
+<!-- MODALS -->
+<dialog id="brandDlg" class="dlg">
+  <form method="dialog">
+    <h2>Channel &amp; links</h2>
+    <p class="hint">Shown on every short (each template decides where).</p>
+    <div class="brand-logo">
+      <div class="logo-prev" id="logoPrev"></div>
+      <div>
+        <button type="button" class="small" id="logoBtn">Upload logo</button>
+        <button type="button" class="small" id="logoClear">Remove</button>
+        <input type="file" id="logoFile" accept="image/*" hidden>
+      </div>
+    </div>
+    <label class="field">Channel name <input id="bChannel"></label>
+    <label class="field">Handle <input id="bHandle" placeholder="@name"></label>
+    <label class="field">Call to action <input id="bCta" placeholder="Full video on the channel"></label>
+    <label class="field">Links (one per line, max 3) <textarea id="bLinks" rows="3"></textarea></label>
+    <div class="dlg-actions"><button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button><button value="ok" class="accent-btn" id="bSave">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="settingsDlg" class="dlg wide">
+  <form method="dialog">
+    <h2>AI &amp; settings</h2>
+    <p class="hint">Same connection types as Appling: your signed-in Claude Code or Codex, local Ollama, or an API. API keys are read from environment variables, never saved here.</p>
+    <div id="connList"></div>
+    <button type="button" class="small" id="addConn">+ Add connection</button>
+    <h3>Transcription</h3>
+    <label class="field">Whisper model (runs on this Mac)
+      <select id="whisperModel">
+        <option value="mlx-community/whisper-base-mlx">base &middot; fastest</option>
+        <option value="mlx-community/whisper-small-mlx">small &middot; balanced</option>
+        <option value="mlx-community/whisper-large-v3-turbo">large-v3-turbo &middot; best, 1.6 GB download</option>
+      </select>
+    </label>
+    <div class="dlg-actions"><button type="button" class="ghost" onclick="this.closest('dialog').close()">Close</button><button value="ok" class="accent-btn" id="sSave">Save</button></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
