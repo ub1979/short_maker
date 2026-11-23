@@ -443,20 +443,36 @@ def _autosync_job(pid: str) -> None:
 
 
 def _autosync(pid: str) -> None:
-    from app.lyrics_align import is_rtl_text, is_section_label
+    from app.lyrics_align import is_section_label
     project = store.load_project(pid)
     lines = project["lyrics"]["lines"]
     sung = [l["text"] for l in lines if not is_section_label(l["text"])]
     # Qwen's forced aligner times the exact lyrics, which is far more reliable than
-    # recognising the words and matching them up. It has no Urdu, so Urdu songs
-    # (any right-to-left lyrics) keep the Whisper path.
-    if sung and not any(is_rtl_text(t) for t in sung) and _qwen_installed():
-        _autosync_qwen(pid, project)
-    else:
-        _autosync_whisper(pid, project)
+    # recognising the words and matching them up. But it knows only 11 languages
+    # (Chinese, Cantonese, English, German, Spanish, French, Italian, Portuguese,
+    # Russian, Korean, Japanese). Lyrics in any other script (Urdu, Hindi, Arabic,
+    # Thai...) go straight to Whisper; for Latin/Cyrillic lyrics the worker checks
+    # which language is sung and hands back "unsupported" for the rest.
+    if sung and _aligner_script(sung) and _qwen_installed():
+        if _autosync_qwen(pid, project):
+            return
+    _autosync_whisper(pid, project)
 
 
-def _autosync_qwen(pid: str, project: dict) -> None:
+def _aligner_script(texts: list[str]) -> bool:
+    """True when every letter is Latin, Cyrillic, Chinese, Japanese or Korean."""
+    for ch in "".join(texts):
+        if not ch.isalpha():
+            continue
+        o = ord(ch)
+        if not (o < 0x0250 or 0x1E00 <= o < 0x1F00 or 0x0400 <= o < 0x0530 or 0x1100 <= o < 0x1200
+                or 0x2E80 <= o < 0xA000 or 0xAC00 <= o < 0xD7B0 or 0xF900 <= o < 0xFB00 or 0xFF00 <= o < 0xFFF0):
+            return False
+    return True
+
+
+def _autosync_qwen(pid: str, project: dict) -> bool:
+    """Returns False when the song's language isn't one the aligner knows (use Whisper)."""
     from app.lyrics_align import is_section_label
     folder = store.project_dir(pid)
     lines = project["lyrics"]["lines"]
@@ -464,7 +480,8 @@ def _autosync_qwen(pid: str, project: dict) -> None:
         opts = {"lines": [l["text"] for l in lines],
                 "fixed": {str(i): l["start"] for i, l in enumerate(lines)
                           if l.get("start") is not None and not l.get("heard") and not l.get("est")},
-                "skip": [i for i, l in enumerate(lines) if is_section_label(l["text"])]}
+                "skip": [i for i, l in enumerate(lines) if is_section_label(l["text"])],
+                "spoken": (project.get("transcript") or {}).get("language") or None}
         out, opt = folder / "lyrics_align.json", folder / "lyrics_align_opts.json"
         opt.write_text(json.dumps(opts, ensure_ascii=False))
         r = subprocess.run([sys.executable, "-m", "app.transcribe_worker", str(folder / project["source"]["file"]),
@@ -473,7 +490,10 @@ def _autosync_qwen(pid: str, project: dict) -> None:
         if r.returncode != 0:
             tail = [l for l in r.stderr.strip().splitlines() if l.strip()][-1:] or ["unknown error"]
             raise RuntimeError(tail[0][:300])
-        times = json.loads(out.read_text())["times"]
+        result = json.loads(out.read_text())
+        if result.get("unsupported"):
+            return False
+        times = result["times"]
         texts = opts["lines"]
 
         def fn(p):
@@ -501,6 +521,7 @@ def _autosync_qwen(pid: str, project: dict) -> None:
         store.update_project(pid, fn)
     except Exception as e:  # noqa: BLE001
         store.update_project(pid, lambda p: p.update(lyrics_sync={"status": "error", "error": f"Auto-sync failed: {e}"}))
+    return True
 
 
 def _autosync_whisper(pid: str, project: dict) -> None:

@@ -2,7 +2,8 @@
 
 <model> picks the engine:
   - "Qwen/Qwen3-ASR-..."  -> Qwen3-ASR + Qwen3-ForcedAligner (word times). Best for
-    English and ~29 other languages, but it has NO Urdu.
+    English and ~29 other languages, but it has NO Urdu (it hears it as Hindi/Arabic).
+    Its forced aligner knows only 11 languages (see ALIGN_LANGS).
   - anything else          -> mlx-whisper (e.g. "mlx-community/whisper-small-mlx").
 
 Kept out of the server process so a crash or the large model doesn't take the
@@ -136,6 +137,18 @@ def _script_language(texts) -> str:
     return "English"  # any space-separated language is split the same way
 
 
+# The forced aligner knows only these 11 languages (its model config lists them).
+# Keys are Whisper codes and Qwen-ASR names, as stored in transcripts.
+ALIGN_LANGS = {
+    "zh": "Chinese", "chinese": "Chinese", "yue": "Cantonese", "cantonese": "Cantonese",
+    "en": "English", "english": "English", "de": "German", "german": "German",
+    "es": "Spanish", "spanish": "Spanish", "fr": "French", "french": "French",
+    "it": "Italian", "italian": "Italian", "pt": "Portuguese", "portuguese": "Portuguese",
+    "ru": "Russian", "russian": "Russian", "ko": "Korean", "korean": "Korean",
+    "ja": "Japanese", "japanese": "Japanese",
+}
+
+
 def run_qwen_align(media: str, opts: dict):
     """Time the user's own lyric lines with Qwen3-ForcedAligner.
 
@@ -163,25 +176,47 @@ def run_qwen_align(media: str, opts: dict):
     skip = set(int(i) for i in (opts.get("skip") or []))
     dev = "mps" if torch.backends.mps.is_available() else ("cuda:0" if torch.cuda.is_available() else "cpu")
     dtype = torch.float32 if dev == "cpu" else torch.bfloat16
-    lang = _script_language(texts)
+    # Which language is sung? The aligner knows only 11 languages, and lyrics in
+    # English letters may still be sung in Urdu/Hindi, so we ask the audio when the
+    # project's transcript doesn't already say. Qwen-ASR hears Urdu as "hindi".
+    spoken = str(opts.get("spoken") or "").strip().lower()
+    heard_words = None
+    if dur > ALIGN_WINDOW or not spoken:
+        from qwen_asr import Qwen3ASRModel
+        asr = Qwen3ASRModel.from_pretrained("Qwen/Qwen3-ASR-0.6B", forced_aligner=QWEN_ALIGNER,
+                                            forced_aligner_kwargs={"dtype": dtype, "device_map": dev},
+                                            dtype=dtype, device_map=dev, max_inference_batch_size=4, max_new_tokens=2048)
+        r = asr.transcribe(audio=(wav, sr), return_time_stamps=dur > ALIGN_WINDOW)[0]
+        if dur > ALIGN_WINDOW:
+            heard_words = [{"w": it.text, "s": float(it.start_time), "e": float(it.end_time)}
+                           for it in (r.time_stamps or [])]
+        if not spoken:  # a song can come back as several, e.g. "English,Arabic"
+            spoken = ",".join(x.strip().lower() for x in (r.language or "").split(",") if x.strip())
+        del asr
+    if _CJK.search("".join(texts)) or re.search(r"[\u3040-\u30ff]", "".join(texts)):
+        lang = _script_language(texts)
+    elif not spoken:
+        lang = "English"  # nothing recognisable was heard; split by spaces anyway
+    else:
+        # every language heard must be one the aligner knows (a song that's half
+        # Urdu, heard as Hindi/Arabic, needs Whisper even if the rest is English)
+        langs = [ALIGN_LANGS.get(x) for x in spoken.split(",")]
+        if None in langs:
+            return {"engine": "qwen-align", "unsupported": spoken}
+        lang = max(set(langs), key=langs.count) if len(set(langs)) > 1 else langs[0]
+    print(f"aligning as {lang} (heard: {spoken or 'unknown'})", file=sys.stderr)
+
     aligner = Qwen3ForcedAligner.from_pretrained(QWEN_ALIGNER, dtype=dtype, device_map=dev)
     words_of = lambda t: aligner.aligner_processor.encode_timestamp(t, lang)[0]  # noqa: E731
     sung = [i for i, t in enumerate(texts) if i not in skip and words_of(t)]
     times: list = [None] * len(texts)
     if not sung:
-        return {"engine": "qwen-align", "times": times, "heard": 0}
+        return {"engine": "qwen-align", "times": times, "heard": 0, "language": lang}
 
     # rough time of every sung line, used only to cut long songs into windows
     rough = {i: fixed[i] for i in sung if i in fixed}
     heard_rough = set(rough)
-    if dur > ALIGN_WINDOW:
-        from qwen_asr import Qwen3ASRModel
-        asr = Qwen3ASRModel.from_pretrained("Qwen/Qwen3-ASR-0.6B", forced_aligner=QWEN_ALIGNER,
-                                            forced_aligner_kwargs={"dtype": dtype, "device_map": dev},
-                                            dtype=dtype, device_map=dev, max_inference_batch_size=4, max_new_tokens=2048)
-        r = asr.transcribe(audio=(wav, sr), return_time_stamps=True)[0]
-        heard_words = [{"w": it.text, "s": float(it.start_time), "e": float(it.end_time)} for it in (r.time_stamps or [])]
-        del asr
+    if heard_words is not None:
         lines = [{"text": texts[i], "start": fixed.get(i), "end": None} for i in sung]
         res = align_lyrics(lines, [{"words": heard_words}], dur)
         for k, i in enumerate(sung):
@@ -242,7 +277,8 @@ def run_qwen_align(media: str, opts: dict):
         if times[i][1] is not None and times[i][1] < times[i][0]:
             times[i][1] = times[i][0]
         last = times[i][0]
-    return {"engine": "qwen-align", "times": times, "heard": sum(1 for i in sung if times[i] and i not in fixed)}
+    return {"engine": "qwen-align", "times": times, "language": lang,
+            "heard": sum(1 for i in sung if times[i] and i not in fixed)}
 
 
 def build_segments(text: str, items):
