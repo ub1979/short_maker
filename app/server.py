@@ -122,6 +122,35 @@ def render_file(pid: str, cid: str, download: int = 0):
     return FileResponse(path, filename=path.name if download else None)
 
 
+@app.get("/media/{pid}/thumb/{cid}")
+def clip_thumb(pid: str, cid: str):
+    """A small picture of one short for the render panel: a frame of the finished
+    9:16 video once it's rendered, otherwise a frame of the source at the clip."""
+    project = _project(pid)
+    try:
+        clip = store.find_clip(project, cid)
+    except KeyError:
+        raise HTTPException(404) from None
+    r = clip.get("render") or {}
+    out = Path(r["path"]) if r.get("status") == "done" and r.get("path") else None
+    if out is not None and out.is_file():
+        src, at, key = out, min(1.5, max(0.0, (clip["end"] - clip["start"]) / 3)), f"r{int(r.get('finished') or 0)}"
+    else:
+        src = store.project_dir(pid) / project["source"]["file"]
+        at, key = clip["start"] + min(2.0, (clip["end"] - clip["start"]) / 3), f"s{clip['start']:.2f}"
+    thumbs = store.project_dir(pid) / "thumbs"
+    thumbs.mkdir(exist_ok=True)
+    jpg = thumbs / f"{cid}_{key}.jpg"
+    if not jpg.is_file():
+        for old in thumbs.glob(f"{cid}_*.jpg"):
+            old.unlink(missing_ok=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", str(src), "-frames:v", "1",
+                        "-vf", "scale=-2:360", "-q:v", "5", str(jpg)], capture_output=True, timeout=30)
+        if not jpg.is_file():
+            raise HTTPException(404, "No picture yet")
+    return FileResponse(jpg, headers={"Cache-Control": "max-age=86400"})
+
+
 # ---------------- where renders are saved ----------------
 
 def _choose_folder(start: str) -> str | None:

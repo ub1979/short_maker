@@ -9,6 +9,7 @@ import { renderDesignForm, setPath, getPath, SCHEMA } from './design.js';
 import { openSettings, activeConnectionLabel } from './settings.js';
 import { initLyrics, resetLyricsView, renderLyrics, highlightLyrics, lyricsKey, autoState, focusLyricAt } from './lyrics.js';
 import { initStageEdit, refreshStageEdit } from './stage-edit.js';
+import { initRenderQueue, rqStart, rqPreparing, rqPosted, rqFailed, rqUpdate, rqReset, rqBusy } from './render-queue.js';
 
 const $ = (id) => document.getElementById(id);
 const S = {
@@ -86,6 +87,7 @@ async function openProject(id) {
   S.chat = [];
   S.suggestAfter = null; // a pending "find moments" belongs to the video it was clicked on
   resetLyricsView();
+  rqReset();
   autoState();
   $('chatLog').innerHTML = '';
   location.hash = `p/${id}`;
@@ -151,6 +153,7 @@ function renderClips() {
       <div><div class="t">${esc(c.title || 'Untitled short')}</div><div class="s">${fmt(c.start, 0)}–${fmt(c.end, 0)} · ${Math.round(c.end - c.start)}s</div></div>
     </div>`).join('') : '<span class="dim" style="font-size:13px">No shorts yet. Mark a range on the timeline or ask the AI.</span>';
   list.querySelectorAll('.clipcard').forEach((el) => { el.onclick = () => selectClip(el.dataset.id, true); });
+  rqUpdate();
 }
 
 function selectClip(id, seekTo) {
@@ -608,6 +611,8 @@ async function chooseOutputDir() {
 
 async function renderClip(clip, asked) {
   if (!asked && !S.project.output_dir && !(await chooseOutputDir())) return;
+  if (!asked) rqStart([clip.id]); // Render all already put its shorts in the panel
+  rqPreparing(clip.id);
   if (clip.id === S.selected) {
     $('renderBtn').disabled = true;
     $('rStatus').textContent = 'Preparing layers and captions…';
@@ -616,8 +621,9 @@ async function renderClip(clip, asked) {
     const form = await buildRenderForm({ tpl: effective(clip), clip, project: S.project, brand: S.brand });
     await api(`/api/projects/${S.project.id}/clips/${clip.id}/render`, { method: 'POST', body: form });
     clip.render = { status: 'queued', progress: 0 };
+    rqPosted(clip.id);
     renderClips(); renderRender();
-  } catch (e) { toast('Render failed: ' + e.message, true); renderRender(); }
+  } catch (e) { rqFailed(clip.id, e.message); renderRender(); }
 }
 
 // ---------------- video & preview ----------------
@@ -1039,10 +1045,11 @@ function wireStatic() {
   }
   S.suggestMoments = suggestMoments;
   $('renderAll').onclick = async () => {
+    if (rqBusy()) { toast('Already rendering. The panel bottom-right shows the progress.'); rqUpdate(); return; }
     const todo = S.project.clips.filter((c) => !['queued', 'rendering'].includes(c.render?.status));
     if (!todo.length) { toast('Nothing to render'); return; }
     if (!S.project.output_dir && !(await chooseOutputDir())) return;
-    toast(`Rendering ${todo.length} short${todo.length > 1 ? 's' : ''}…`);
+    rqStart(todo.map((c) => c.id)); // the render panel shows each one
     for (const c of todo) await renderClip(c, true);
   };
   $('transcribeBtn').onclick = async () => {
@@ -1129,6 +1136,11 @@ function wireStatic() {
   initLyrics({
     S, video, seek,
     changed: () => { S.lyVersion++; S.dirty = true; updateCapNote(); },
+  });
+  initRenderQueue({
+    project: () => S.project,
+    retry: (c) => renderClip(c, true),
+    select: (id) => selectClip(id, true),
   });
   initStageEdit({
     S, selClip, effective, apply: applyOverride,
