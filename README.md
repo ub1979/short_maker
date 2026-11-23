@@ -6,14 +6,20 @@ Turn a long 16:9 video into vertical 9:16 shorts for YouTube Shorts, Instagram R
 ./start.sh
 ```
 
-Then open http://127.0.0.1:8765
+Then open http://127.0.0.1:8765. The server runs in the background, so your terminal is free (log: `data/server.log`). To stop it:
 
-Needs: `ffmpeg` and `uv` (brew install ffmpeg). Transcription uses `mlx-whisper`, which needs an Apple Silicon Mac. The first transcription downloads the Whisper model.
+```bash
+./stop.sh
+```
+
+`./start.sh --fg` runs it in the terminal instead (Ctrl+C stops it).
+
+Needs: `ffmpeg` and `uv` (brew install ffmpeg). Transcription uses Qwen3-ASR (PyTorch) and `mlx-whisper`, which needs an Apple Silicon Mac. The first transcription downloads the model (about 2–4 GB for Qwen).
 
 ## How it works
 
 1. **Upload** a video (mp4, mov, mkv, webm). Files a browser can't play, like HEVC or mkv, get a 720p preview copy. The final render always uses the original file.
-2. **Transcribe** with Whisper on your Mac. This gives you searchable text, word-timed captions and AI moment-picking.
+2. **Transcribe** on your Mac with **Qwen3-ASR** (default; best for English and 29 other languages) or **Whisper**. Qwen has no Urdu, so videos with Urdu lyrics (or Urdu speech, which Qwen hears as Hindi) go to Whisper automatically. Pick the engine in AI & settings, or per video next to the Transcribe button. "AI: find best moments" transcribes first if needed. This gives you searchable text, word-timed captions and AI moment-picking.
 3. **Make shorts** in any of these ways:
    - Press `I` / `O` (or *Start here* / *End here*) at the playhead.
    - Drag the clip edges on the timeline.

@@ -53,7 +53,7 @@ window.addEventListener('hashchange', () => {
 });
 
 async function showHome() {
-  S.project = null; S.selected = null;
+  S.project = null; S.selected = null; S.suggestAfter = null;
   video.pause(); video.removeAttribute('src'); video.load();
   $('editor').hidden = true; $('home').hidden = false;
   $('crumb').innerHTML = '';
@@ -84,6 +84,8 @@ async function openProject(id) {
   S.project = await api(`/api/projects/${id}`);
   S.project.lyrics ||= { lines: [] };
   S.chat = [];
+  S.suggestAfter = null; // a pending "find moments" belongs to the video it was clicked on
+  $('trEngine').value = 'auto'; // the engine pick is per video; Auto handles Urdu by itself
   resetLyricsView();
   autoState();
   $('chatLog').innerHTML = '';
@@ -170,6 +172,12 @@ function renderTimeline() {
     </div>`).join('');
 }
 
+function engineName(model) {
+  if (!model) return 'Whisper';
+  if (/^qwen\//i.test(model)) return model.split('/')[1].replace('Qwen3-ASR-', 'Qwen3-ASR ');
+  return 'Whisper ' + (model.split('/').pop().replace(/^whisper-|-mlx$/g, '') || '');
+}
+
 function renderTranscript() {
   const tr = S.project.transcript || {};
   const box = $('transcript');
@@ -178,7 +186,7 @@ function renderTranscript() {
   btn.textContent = tr.status === 'done' ? 'Re-transcribe' : 'Transcribe';
   if (tr.status === 'working') {
     const secs = Math.round(Date.now() / 1000 - (tr.started || Date.now() / 1000));
-    box.innerHTML = `<div class="tr-empty"><span class="spin"></span>Transcribing on this Mac… ${secs}s<br><span class="mono" style="font-size:11px">First run downloads the Whisper model.</span></div>`;
+    box.innerHTML = `<div class="tr-empty"><span class="spin"></span>Transcribing on this Mac with ${esc(engineName(tr.model))}… ${secs}s<br><span class="mono" style="font-size:11px">${tr.why ? `Using it because ${esc(tr.why)}. ` : ''}The first run downloads the model.</span></div>`;
     return;
   }
   if (tr.status === 'error') { box.innerHTML = `<div class="tr-empty" style="color:var(--red)">${esc(tr.error)}</div>`; return; }
@@ -187,12 +195,14 @@ function renderTranscript() {
     return;
   }
   const q = $('trSearch').value.trim().toLowerCase();
+  const by = `<div class="tr-by mono">Transcribed with ${esc(engineName(tr.model))}${tr.language ? ` · ${esc(tr.language)}` : ''}</div>`;
   const segs = tr.segments.filter((s) => !q || s.text.toLowerCase().includes(q));
   box.innerHTML = segs.map((s) => {
     let text = esc(s.text);
     if (q) text = text.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (m) => `<mark>${m}</mark>`);
     return `<div class="seg-line" data-s="${s.start}" data-e="${s.end}"><span class="ts">${fmt(s.start, 0)}</span><span class="t">${text}</span><button class="add" title="New short starting here">+ short</button></div>`;
   }).join('') || '<div class="tr-empty">No matches.</div>';
+  box.insertAdjacentHTML('beforeend', by);
   box.querySelectorAll('.seg-line').forEach((el) => {
     el.onclick = (e) => {
       const s = +el.dataset.s;
@@ -939,7 +949,11 @@ async function poll() {
   if (wasProxy !== p.status?.proxy || p.status?.proxy === 'working') loadVideo();
   if (wasTr !== p.transcript?.status || p.transcript?.status === 'working') {
     renderTranscript(); renderInspector();
-    if (wasTr === 'working' && p.transcript.status === 'done') toast('Transcript ready — captions are on. Try “AI: find best moments”.');
+    if (wasTr === 'working' && p.transcript.status === 'done') {
+      if (S.suggestAfter === p.id) { S.suggestAfter = null; toast('Transcript ready. Asking the AI for the best moments…'); S.suggestMoments(); }
+      else toast('Transcript ready — captions are on. Try “AI: find best moments”.');
+    }
+    if (wasTr === 'working' && p.transcript.status === 'error' && S.suggestAfter === p.id) S.suggestAfter = null;
   }
   renderClips(); renderRender();
 }
@@ -1000,13 +1014,29 @@ function wireStatic() {
   $('setIn').onclick = () => setEdge('start');
   $('setOut').onclick = () => setEdge('end');
   $('newClip').onclick = () => newClipAt(video.currentTime);
-  $('aiSuggest').onclick = () => {
-    const timed = S.project?.transcript?.status === 'done' || syncedLyrics(S.project?.lyrics).length > 0;
-    const have = S.project?.clips.length || 0;
-    sendChat(!timed ? 'There is no transcript or synced lyrics yet. What should I do to get AI-picked moments?'
+  $('aiSuggest').onclick = () => suggestMoments();
+  async function suggestMoments() {
+    if (!S.project) return;
+    const timed = S.project.transcript?.status === 'done' || syncedLyrics(S.project.lyrics).length > 0;
+    // No timings yet: transcribe first, then come back here automatically (see poll()).
+    if (!timed && S.project.source.has_audio) {
+      S.suggestAfter = S.project.id;
+      if (S.project.transcript?.status !== 'working') {
+        try {
+          const r = await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST', body: { engine: $('trEngine').value } });
+          S.project.transcript = { status: 'working', started: Date.now() / 1000, model: r.model, why: r.why };
+          renderTranscript();
+        } catch (e) { S.suggestAfter = null; toast(e.message, true); return; }
+      }
+      toast('Transcribing first. The AI will pick moments as soon as the transcript is ready.');
+      return;
+    }
+    const have = S.project.clips.length;
+    sendChat(!timed ? 'There is no transcript or synced lyrics yet (this video has no audio). What can I do?'
       : have ? `Find up to 5 NEW moments for shorts that the ${have} existing shorts don't already cover (20-60s each, strong hook, complete thought). Add them with punchy titles. If the good moments are all taken, say so instead of repeating one.`
         : 'Find the 5 best moments in this video for shorts (20-60s each, strong hook, complete thought). Add them as shorts with punchy titles and pick a fitting template.');
-  };
+  }
+  S.suggestMoments = suggestMoments;
   $('renderAll').onclick = async () => {
     const todo = S.project.clips.filter((c) => !['queued', 'rendering'].includes(c.render?.status));
     if (!todo.length) { toast('Nothing to render'); return; }
@@ -1016,8 +1046,9 @@ function wireStatic() {
   };
   $('transcribeBtn').onclick = async () => {
     try {
-      await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST' });
-      S.project.transcript = { status: 'working', started: Date.now() / 1000 };
+      S.suggestAfter = null; // a plain Transcribe shouldn't trigger AI suggestions afterwards
+      const r = await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST', body: { engine: $('trEngine').value } });
+      S.project.transcript = { status: 'working', started: Date.now() / 1000, model: r.model, why: r.why };
       renderTranscript();
     } catch (e) { toast(e.message, true); }
   };

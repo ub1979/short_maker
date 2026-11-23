@@ -15,6 +15,8 @@ export async function openSettings(onSaved) {
   settings = await api('/api/settings');
   const dlg = document.getElementById('settingsDlg');
   document.getElementById('whisperModel').value = settings.whisper_model;
+  const asr = settings.asr_model || 'Qwen/Qwen3-ASR-0.6B';
+  document.getElementById('asrModel').value = asr.toLowerCase().startsWith('qwen/') ? asr : 'whisper';
   draw();
   document.getElementById('addConn').onclick = () => {
     settings.connections.push({ id: 'c' + Math.random().toString(36).slice(2, 8), name: 'New connection', engine: 'openai-compatible', base_url: 'https://api.openai.com/v1', api_key_env: 'OPENAI_API_KEY', model: '' });
@@ -24,6 +26,8 @@ export async function openSettings(onSaved) {
     e.preventDefault();
     collect();
     settings.whisper_model = document.getElementById('whisperModel').value;
+    const pick = document.getElementById('asrModel').value;
+    settings.asr_model = pick === 'whisper' ? settings.whisper_model : pick;
     settings = await api('/api/settings', { method: 'PUT', body: settings });
     toast('Settings saved');
     dlg.close();

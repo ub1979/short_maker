@@ -304,7 +304,7 @@ export function captionChunks(transcript, clip, maxWords = 3) {
     return {
       start, end: Math.min(dur, Math.max(end, start + 0.2)),
       abs: { start: ws[0].s, end: ws[ws.length - 1].e }, // source times, used to edit the text
-      words: ws.map((w) => ({ w: w.w, s: Math.max(0, w.s - clip.start), e: Math.min(dur, w.e - clip.start) })),
+      words: ws.map((w) => ({ w: w.w, s: Math.max(0, w.s - clip.start), e: Math.min(dur, w.e - clip.start), j: w.j || undefined })),
     };
   }).filter((c) => c.end > c.start);
 }
@@ -375,11 +375,14 @@ function layoutCaption(ctx, c, chunk) {
   const rtl = isRtl(texts.join(' '));
   const lines = [[]];
   let lw = 0;
+  // j = "join": a Chinese/Japanese/Korean piece that had no space before it in the transcript
   texts.forEach((t, i) => {
     const m = ctx.measureText(t), w = m.width;
-    if (lw && lw + space + w > maxW) { lines.push([]); lw = 0; }
-    lines[lines.length - 1].push({ t, i, w, up: m.actualBoundingBoxAscent || 0, down: m.actualBoundingBoxDescent || 0 });
-    lw += (lw ? space : 0) + w;
+    const gap = chunk.words[i].j ? 0 : space;
+    if (lw && lw + gap + w > maxW) { lines.push([]); lw = 0; }
+    const first = !lines[lines.length - 1].length;
+    lines[lines.length - 1].push({ t, i, w, gap: first ? 0 : gap, up: m.actualBoundingBoxAscent || 0, down: m.actualBoundingBoxDescent || 0 });
+    lw += (lw ? gap : 0) + w;
   });
   // Line spacing: the template's lineHeight, but never less than the real ink
   // height of the two lines plus their outline, so tall scripts (Urdu marks
@@ -394,14 +397,14 @@ function layoutCaption(ctx, c, chunk) {
   ys[lines.length - 1] = c.y;
   for (let li = lines.length - 2; li >= 0; li--) ys[li] = ys[li + 1] - Math.max(lh, down[li] + up[li + 1] + ink);
   const out = lines.map((ln, li) => {
-    const total = ln.reduce((n, x) => n + x.w, 0) + space * (ln.length - 1);
+    const total = ln.reduce((n, x) => n + x.w + x.gap, 0);
     const y = ys[li];
     if (rtl) {
       let x = W / 2 + total / 2;
-      return ln.map((x0) => { x -= x0.w; const r = { ...x0, x, y }; x -= space; return r; });
+      return ln.map((x0) => { x -= x0.gap + x0.w; return { ...x0, x, y }; });
     }
     let x = W / 2 - total / 2;
-    return ln.map((x0) => { const r = { ...x0, x, y }; x += x0.w + space; return r; });
+    return ln.map((x0) => { x += x0.gap; const r = { ...x0, x, y }; x += x0.w; return r; });
   }).flat();
   const pad = (c.strokeWidth || 0) + (c.box ? c.size * 0.35 : 4);
   const minX = Math.min(...out.map((o) => o.x)) - pad, maxX = Math.max(...out.map((o) => o.x + o.w)) + pad;

@@ -77,6 +77,7 @@ export function showSource(which) {
   $('transcript').hidden = ly;
   $('trSearch').hidden = ly;
   $('transcribeBtn').hidden = ly;
+  $('trEngine').hidden = ly;
   if (ly) renderLyrics();
   else if (sync.active) stopSync();
 }

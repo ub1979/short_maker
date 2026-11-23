@@ -182,7 +182,7 @@ def health():
         whisper = importlib.util.find_spec("mlx_whisper") is not None
     except ImportError:
         whisper = False
-    return {"ffmpeg": bool(shutil.which("ffmpeg")), "whisper": whisper}
+    return {"ffmpeg": bool(shutil.which("ffmpeg")), "whisper": whisper, "qwen": _qwen_installed()}
 
 
 # ---------------- projects ----------------
@@ -261,31 +261,83 @@ def delete_project(pid: str):
 
 # ---------------- transcription ----------------
 
+def _qwen_installed() -> bool:
+    import importlib.util
+    try:
+        return importlib.util.find_spec("qwen_asr") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _has_urdu_lyrics(project: dict) -> bool:
+    from app.lyrics_align import is_rtl_text
+    return any(is_rtl_text(l.get("text", "")) for l in (project.get("lyrics") or {}).get("lines", []))
+
+
+def _pick_asr_model(project: dict, engine: str) -> tuple[str, str]:
+    """(model, why). engine: auto | qwen | whisper."""
+    settings = store.load_settings()
+    whisper = settings.get("whisper_model") or store.DEFAULT_SETTINGS["whisper_model"]
+    default = settings.get("asr_model") or store.DEFAULT_SETTINGS["asr_model"]
+    qwen = default if default.lower().startswith("qwen/") else store.DEFAULT_SETTINGS["asr_model"]
+    if engine == "whisper":
+        return whisper, "you picked it for this video"
+    if engine == "qwen":
+        return (qwen, "you picked it for this video") if _qwen_installed() else (whisper, "Qwen isn't installed")
+    if not default.lower().startswith("qwen/"):
+        return default, "it's the engine set in AI & settings"
+    if _has_urdu_lyrics(project):
+        return whisper, "your lyrics are Urdu, which Qwen can't transcribe"
+    if str((project.get("transcript") or {}).get("language") or "").lower() in ("ur", "urdu"):
+        return whisper, "this video was transcribed as Urdu before, which Qwen can't do"
+    if not _qwen_installed():
+        return whisper, "Qwen isn't installed"
+    return default, "it's the engine set in AI & settings"
+
+
 @app.post("/api/projects/{pid}/transcribe")
-def transcribe(pid: str):
+async def transcribe(pid: str, request: Request):
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    engine = body.get("engine") if isinstance(body, dict) and body.get("engine") in ("auto", "qwen", "whisper") else "auto"
     project = _project(pid)
     if project["transcript"].get("status") == "working":
         return project["transcript"]
     if not project["source"].get("has_audio"):
         raise HTTPException(400, "This video has no audio to transcribe.")
-    store.update_project(pid, lambda p: p.update(transcript={"status": "working", "started": time.time()}))
-    work_pool.submit(_transcribe_job, pid)
-    return {"status": "working"}
+    model, why = _pick_asr_model(project, engine)
+    store.update_project(pid, lambda p: p.update(transcript={"status": "working", "started": time.time(), "model": model, "why": why}))
+    work_pool.submit(_transcribe_job, pid, model, why, engine == "auto")
+    return {"status": "working", "model": model, "why": why}
 
 
-def _transcribe_job(pid: str) -> None:
+def _run_asr(src: Path, out: Path, model: str) -> dict:
+    r = subprocess.run([sys.executable, "-m", "app.transcribe_worker", str(src), str(out), model],
+                       cwd=store.ROOT, capture_output=True, text=True, timeout=6 * 3600)
+    if r.returncode != 0:
+        tail = [l for l in r.stderr.strip().splitlines() if l.strip()][-1:] or ["unknown error"]
+        raise RuntimeError(tail[0][:300])
+    return json.loads(out.read_text())
+
+
+def _transcribe_job(pid: str, model: str, why: str = "", auto: bool = False) -> None:
     project = store.load_project(pid)
     folder = store.project_dir(pid)
-    model = store.load_settings().get("whisper_model") or store.DEFAULT_SETTINGS["whisper_model"]
     out = folder / "transcript.json"
+    src = folder / project["source"]["file"]
     try:
-        r = subprocess.run([sys.executable, "-m", "app.transcribe_worker", str(folder / project["source"]["file"]), str(out), model],
-                           cwd=store.ROOT, capture_output=True, text=True, timeout=6 * 3600)
-        if r.returncode != 0:
-            tail = [l for l in r.stderr.strip().splitlines() if l.strip()][-1:] or ["unknown error"]
-            raise RuntimeError(tail[0][:300])
-        data = json.loads(out.read_text())
-        store.update_project(pid, lambda p: p.update(transcript={"status": "done", "model": model, **data}))
+        data = _run_asr(src, out, model)
+        # Qwen has no Urdu and hears Urdu speech as Hindi. In Auto mode, redo it with
+        # Whisper, which knows both (and writes Urdu in Urdu script).
+        if auto and data.get("engine") == "qwen" and data.get("language") in ("hindi", "urdu"):
+            store.update_project(pid, lambda p: p["transcript"].update(
+                why="Qwen heard Hindi/Urdu, so it's being redone with Whisper, which knows Urdu"))
+            model = store.load_settings().get("whisper_model") or store.DEFAULT_SETTINGS["whisper_model"]
+            why = "Qwen heard Hindi/Urdu, and Whisper also knows Urdu"
+            data = _run_asr(src, out, model)
+        store.update_project(pid, lambda p: p.update(transcript={"status": "done", "model": model, "why": why, **data}))
     except Exception as e:  # noqa: BLE001
         store.update_project(pid, lambda p: p.update(transcript={"status": "error", "error": f"Transcription failed: {e}"}))
 
@@ -640,7 +692,7 @@ async def put_settings(request: Request):
                 continue
             conns.append({k: str(c.get(k, ""))[:300] for k in ("id", "name", "engine", "model", "base_url", "api_key_env", "binary") if c.get(k)})
         settings["connections"] = conns
-    for k in ("active_connection", "whisper_model"):
+    for k in ("active_connection", "whisper_model", "asr_model"):
         if k in body:
             settings[k] = str(body[k])[:200]
     store.save_settings(settings)
