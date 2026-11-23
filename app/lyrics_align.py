@@ -115,6 +115,22 @@ WORD_SEC = 0.38  # rough length of a sung word, for lines matched mid-way
 MIN_LINE = 0.8   # a sung line takes at least this long
 
 
+_LABEL_WORDS = r"(intro|outro|verse|chorus|pre-?chorus|post-?chorus|hook|bridge|refrain|interlude|instrumental|break|breakdown|coda|drop|solo|spoken|ad-?libs?)"
+
+
+def is_section_label(text: str) -> bool:
+    """Song-structure labels people paste with lyrics ("[Verse 2 – HOP]", "**Chorus:**").
+    They aren't sung, so they never get a time or a caption. A plain bracketed
+    line like "(ooh ooh)" is backing vocals and stays a lyric."""
+    t = text.strip().strip("*_ ").strip()
+    if not t:
+        return False
+    if t.startswith("[") and t.endswith("]"):
+        return True
+    core = t.strip("()[]{}:-–— ").strip("*_ ").lower()
+    return bool(re.fullmatch(_LABEL_WORDS + r"\b[\w\s&'’.,:–—-]{0,40}", core))
+
+
 def is_rtl_text(text: str) -> bool:
     """Like dir="auto": the first letter with a direction decides."""
     for ch in text:

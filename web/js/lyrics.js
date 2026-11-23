@@ -1,7 +1,7 @@
 // "My lyrics": your own caption lines with tap-to-sync timing.
 // Lines are stored on the video (project.lyrics.lines) in source seconds.
 import { api, esc, toast, fmt, parseTime, debounce } from './util.js';
-import { syncedLyrics } from './render.js';
+import { syncedLyrics, isSectionLabel } from './render.js';
 
 const $ = (id) => document.getElementById(id);
 let ctx;          // { S, video, seek, changed }
@@ -57,9 +57,10 @@ export function autoState(fresh) {
       p.lyrics = fresh.lyrics || { lines: [] };
       const r = fresh.lyrics_sync || {};
       if (r.status === 'done') {
-        const parts = [`${r.heard} of ${r.total} lines heard in the song`];
+        const parts = [r.engine === 'qwen' ? `${r.heard} of ${r.total} lines timed from the audio` : `${r.heard} of ${r.total} lines heard in the song`];
         if (r.estimated) parts.push(`${r.estimated} placed between them (grey times, check these)`);
         if (r.kept) parts.push(`${r.kept} of your own times kept`);
+        if (r.labels) parts.push(`${r.labels} section label${r.labels > 1 ? 's' : ''} like [Chorus] skipped`);
         toast(parts.join(' · '));
       } else if (r.status === 'error') toast(r.error, true);
       ctx.changed();
@@ -211,7 +212,9 @@ function countLines() {
 
 function applyPaste() {
   const old = lines();
-  const fresh = $('lyText').value.split('\n').map((x) => x.trim()).filter(Boolean);
+  const all = $('lyText').value.split('\n').map((x) => x.trim()).filter(Boolean);
+  const fresh = all.filter((t) => !isSectionLabel(t)); // "[Verse 2]", "Chorus:" aren't sung
+  const dropped = all.length - fresh.length;
   // keep timings of lines that didn't change (matched in order)
   let j = 0;
   const next = fresh.map((text) => {
@@ -224,7 +227,8 @@ function applyPaste() {
   closePaste();
   changed();
   const unsynced = next.filter((l) => !Number.isFinite(l.start)).length;
-  toast(unsynced ? `${next.length} lines. ${unsynced} need timing — press Tap to sync.` : `${next.length} lines saved`);
+  const note = dropped ? ` Removed ${dropped} section label${dropped > 1 ? 's' : ''} like [Chorus], since they aren't sung.` : '';
+  toast((unsynced ? `${next.length} lines. ${unsynced} need timing — press Auto-sync or Tap to sync.` : `${next.length} lines saved.`) + note);
 }
 
 // ---------- tap to sync ----------
@@ -232,7 +236,7 @@ function startSync() {
   const all = lines();
   if (!all.length) { openPaste(); toast('Paste your lyrics first'); return; }
   // start from the first line without a time, or from the top
-  let idx = all.findIndex((l) => !Number.isFinite(l.start));
+  let idx = all.findIndex((l) => !Number.isFinite(l.start) && !isSectionLabel(l.text));
   if (idx < 0) idx = all.findIndex((l) => l.est); // after auto-sync: fix the guessed lines
   if (idx < 0) idx = 0;
   if (idx === 0) {
@@ -270,6 +274,7 @@ function tap() {
   all[sync.idx].end = null;
   delete all[sync.idx].est; delete all[sync.idx].heard;
   sync.idx++;
+  while (sync.idx < all.length && isSectionLabel(all[sync.idx].text)) sync.idx++; // labels aren't sung
   changed();
   scrollToNext();
   if (sync.idx >= all.length) {
@@ -353,6 +358,7 @@ async function importFile() {
   const text = await f.text();
   let parsed = /-->/.test(text) ? parseSrt(text) : parseLrc(text);
   if (!parsed.length) parsed = text.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).map((t) => ({ text: t, start: null, end: null }));
+  parsed = parsed.filter((l) => !isSectionLabel(l.text));
   if (!parsed.length) { toast('No lines found in that file', true); return; }
   if (lines().length && !confirm(`Replace your ${lines().length} current lines with ${parsed.length} lines from ${f.name}?`)) return;
   ctx.S.project.lyrics.lines = parsed;

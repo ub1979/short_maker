@@ -443,8 +443,68 @@ def _autosync_job(pid: str) -> None:
 
 
 def _autosync(pid: str) -> None:
-    from app.lyrics_align import align_lyrics
+    from app.lyrics_align import is_rtl_text, is_section_label
     project = store.load_project(pid)
+    lines = project["lyrics"]["lines"]
+    sung = [l["text"] for l in lines if not is_section_label(l["text"])]
+    # Qwen's forced aligner times the exact lyrics, which is far more reliable than
+    # recognising the words and matching them up. It has no Urdu, so Urdu songs
+    # (any right-to-left lyrics) keep the Whisper path.
+    if sung and not any(is_rtl_text(t) for t in sung) and _qwen_installed():
+        _autosync_qwen(pid, project)
+    else:
+        _autosync_whisper(pid, project)
+
+
+def _autosync_qwen(pid: str, project: dict) -> None:
+    from app.lyrics_align import is_section_label
+    folder = store.project_dir(pid)
+    lines = project["lyrics"]["lines"]
+    try:
+        opts = {"lines": [l["text"] for l in lines],
+                "fixed": {str(i): l["start"] for i, l in enumerate(lines)
+                          if l.get("start") is not None and not l.get("heard") and not l.get("est")},
+                "skip": [i for i, l in enumerate(lines) if is_section_label(l["text"])]}
+        out, opt = folder / "lyrics_align.json", folder / "lyrics_align_opts.json"
+        opt.write_text(json.dumps(opts, ensure_ascii=False))
+        r = subprocess.run([sys.executable, "-m", "app.transcribe_worker", str(folder / project["source"]["file"]),
+                            str(out), "qwen-align", str(opt)],
+                           cwd=store.ROOT, capture_output=True, text=True, timeout=6 * 3600)
+        if r.returncode != 0:
+            tail = [l for l in r.stderr.strip().splitlines() if l.strip()][-1:] or ["unknown error"]
+            raise RuntimeError(tail[0][:300])
+        times = json.loads(out.read_text())["times"]
+        texts = opts["lines"]
+
+        def fn(p):
+            cur = (p.get("lyrics") or {}).get("lines") or []
+            if [l["text"] for l in cur] != texts:
+                p["lyrics_sync"] = {"status": "error", "error": "Your lyrics changed while syncing. Press Auto-sync again."}
+                return
+            heard = kept = 0
+            for i, l in enumerate(cur):
+                l.pop("est", None)
+                if str(i) in opts["fixed"]:
+                    kept += 1
+                    continue
+                t = times[i] if i < len(times) else None
+                if t is None:  # section label or nothing to align
+                    l.update(start=None, end=None)
+                    l.pop("heard", None)
+                    continue
+                l.update(start=t[0], end=t[1], heard=True)
+                heard += 1
+            p["lyrics"] = {"lines": cur, "updated": time.time()}
+            labels = len(opts["skip"])
+            p["lyrics_sync"] = {"status": "done", "engine": "qwen", "heard": heard, "estimated": 0, "kept": kept,
+                                "labels": labels, "total": len(cur) - labels, "finished": time.time()}
+        store.update_project(pid, fn)
+    except Exception as e:  # noqa: BLE001
+        store.update_project(pid, lambda p: p.update(lyrics_sync={"status": "error", "error": f"Auto-sync failed: {e}"}))
+
+
+def _autosync_whisper(pid: str, project: dict) -> None:
+    from app.lyrics_align import align_lyrics, is_section_label
     folder = store.project_dir(pid)
     model = store.load_settings().get("whisper_model") or store.DEFAULT_SETTINGS["whisper_model"]
     try:
@@ -452,7 +512,7 @@ def _autosync(pid: str) -> None:
         # pass per language, each primed with that language's lines. Words from all
         # passes are merged by time; the aligner just picks whichever matches.
         from app.lyrics_align import is_rtl_text
-        texts = list(dict.fromkeys(l["text"] for l in project["lyrics"]["lines"]))
+        texts = list(dict.fromkeys(l["text"] for l in project["lyrics"]["lines"] if not is_section_label(l["text"])))
         rtl = [t for t in texts if is_rtl_text(t)]
         ltr = [t for t in texts if not is_rtl_text(t)]
         passes = []
@@ -477,14 +537,25 @@ def _autosync(pid: str) -> None:
         segments = [{"words": words}]
 
         def fn(p):
-            lines = (p.get("lyrics") or {}).get("lines") or []
-            res = align_lyrics(lines, segments, p["source"]["duration"])
+            all_lines = (p.get("lyrics") or {}).get("lines") or []
+            # section labels ("[Chorus]") aren't sung: leave them out and give them no time
+            keep = [i for i, l in enumerate(all_lines) if not is_section_label(l["text"])]
+            res = align_lyrics([all_lines[i] for i in keep], segments, p["source"]["duration"])
+            merged = [dict(l, start=None, end=None) for l in all_lines]
+            for k, i in enumerate(keep):
+                merged[i] = res["lines"][k]
+            for i, l in enumerate(merged):
+                if i not in keep:
+                    l.pop("heard", None)
+                    l.pop("est", None)
+            res["lines"] = merged
+            lines = merged
             if not res["heard"] and not res["kept"]:
                 p["lyrics_sync"] = {"status": "error", "error": "Couldn't hear any of your lines in the audio. Try Tap to sync, or a bigger Whisper model in AI & settings."}
                 return
             p["lyrics"] = {"lines": res["lines"], "updated": time.time()}
-            p["lyrics_sync"] = {"status": "done", "heard": res["heard"], "estimated": res["estimated"],
-                                "kept": res["kept"], "total": len(lines), "finished": time.time()}
+            p["lyrics_sync"] = {"status": "done", "engine": "whisper", "heard": res["heard"], "estimated": res["estimated"],
+                                "kept": res["kept"], "labels": len(lines) - len(keep), "total": len(keep), "finished": time.time()}
         store.update_project(pid, fn)
     except Exception as e:  # noqa: BLE001
         store.update_project(pid, lambda p: p.update(lyrics_sync={"status": "error", "error": f"Auto-sync failed: {e}"}))

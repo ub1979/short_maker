@@ -28,7 +28,10 @@ def main() -> int:
     if len(sys.argv) > 4:
         with open(sys.argv[4]) as f:
             opts = json.load(f)
-    data = run_qwen(media, model) if is_qwen(model) else run_whisper(media, model, opts)
+    if model == "qwen-align":
+        data = run_qwen_align(media, opts)
+    else:
+        data = run_qwen(media, model) if is_qwen(model) else run_whisper(media, model, opts)
     if data is None:
         return 2
     with open(out, "w") as f:
@@ -115,6 +118,131 @@ _OPENERS = set("([{\"'“‘«¿¡")
 
 def _is_wordy(ch: str) -> bool:
     return bool(_norm(ch))
+
+
+# ---------------- Qwen forced alignment (lyrics auto-sync) ----------------
+
+ALIGN_WINDOW = 170.0  # the aligner takes at most 180 s of audio per call
+
+
+def _script_language(texts) -> str:
+    joined = "".join(texts)
+    if re.search(r"[\u3040-\u30ff]", joined):
+        return "Japanese"
+    if re.search(r"[\uac00-\ud7af]", joined):
+        return "Korean"
+    if re.search(r"[\u4e00-\u9fff]", joined):
+        return "Chinese"
+    return "English"  # any space-separated language is split the same way
+
+
+def run_qwen_align(media: str, opts: dict):
+    """Time the user's own lyric lines with Qwen3-ForcedAligner.
+
+    opts: {"lines": [text...], "fixed": {"<index>": start_seconds}, "skip": [index...]}
+    Unlike recognising the words and matching them up, forced alignment is told the
+    exact words, so every line gets a real time even in very repetitive songs.
+    Songs longer than ~170 s are cut into windows at lines that Qwen clearly heard
+    (and at lines the user timed), and each window is aligned on its own.
+    Returns {"engine": "qwen-align", "times": [[start, end] | null per line], "heard": n}.
+    """
+    try:
+        import torch
+        from qwen_asr import Qwen3ForcedAligner
+    except ImportError:
+        print("Qwen3-ASR is not installed. Run ./start.sh again to install it.", file=sys.stderr)
+        return None
+    from app.lyrics_align import align_lyrics
+    wav = _load_audio(media)
+    if wav is None:
+        return None
+    sr = 16000
+    dur = len(wav) / sr
+    texts = list(opts.get("lines") or [])
+    fixed = {int(k): float(v) for k, v in (opts.get("fixed") or {}).items()}
+    skip = set(int(i) for i in (opts.get("skip") or []))
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda:0" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float32 if dev == "cpu" else torch.bfloat16
+    lang = _script_language(texts)
+    aligner = Qwen3ForcedAligner.from_pretrained(QWEN_ALIGNER, dtype=dtype, device_map=dev)
+    words_of = lambda t: aligner.aligner_processor.encode_timestamp(t, lang)[0]  # noqa: E731
+    sung = [i for i, t in enumerate(texts) if i not in skip and words_of(t)]
+    times: list = [None] * len(texts)
+    if not sung:
+        return {"engine": "qwen-align", "times": times, "heard": 0}
+
+    # rough time of every sung line, used only to cut long songs into windows
+    rough = {i: fixed[i] for i in sung if i in fixed}
+    heard_rough = set(rough)
+    if dur > ALIGN_WINDOW:
+        from qwen_asr import Qwen3ASRModel
+        asr = Qwen3ASRModel.from_pretrained("Qwen/Qwen3-ASR-0.6B", forced_aligner=QWEN_ALIGNER,
+                                            forced_aligner_kwargs={"dtype": dtype, "device_map": dev},
+                                            dtype=dtype, device_map=dev, max_inference_batch_size=4, max_new_tokens=2048)
+        r = asr.transcribe(audio=(wav, sr), return_time_stamps=True)[0]
+        heard_words = [{"w": it.text, "s": float(it.start_time), "e": float(it.end_time)} for it in (r.time_stamps or [])]
+        del asr
+        lines = [{"text": texts[i], "start": fixed.get(i), "end": None} for i in sung]
+        res = align_lyrics(lines, [{"words": heard_words}], dur)
+        for k, i in enumerate(sung):
+            ln = res["lines"][k]
+            if ln.get("start") is not None and i not in rough:
+                rough[i] = float(ln["start"])
+                if ln.get("heard"):
+                    heard_rough.add(i)
+
+    # Split long songs into pieces of consecutive sung lines (positions in `sung`),
+    # cutting at lines Qwen clearly heard. Each piece is aligned together with a few
+    # lines of context on both sides, and only its own lines' times are kept, so the
+    # rough cut times never decide where a line lands.
+    CONTEXT = 4
+    pieces, a, ws = [], 0, 0.0
+    for b in range(1, len(sung) + 1):
+        if b == len(sung):
+            pieces.append((a, b))
+            break
+        t = rough.get(sung[b])
+        if t is None or t - ws <= ALIGN_WINDOW - 25:  # leave room for the context lines
+            continue
+        cut = next((c for c in range(b, a, -1) if sung[c] in heard_rough and rough[sung[c]] - ws >= 30), b)
+        pieces.append((a, cut))
+        a, ws = cut, rough[sung[cut]]
+
+    def rough_at(pos, default):
+        return rough.get(sung[pos], default) if 0 <= pos < len(sung) else default
+
+    for a, b in pieces:
+        if a >= b:
+            continue
+        lo, hi = max(0, a - CONTEXT), min(len(sung), b + CONTEXT)
+        w0 = 0.0 if lo == 0 else max(0.0, rough_at(lo, 0.0) - 1.5)
+        w1 = dur if hi == len(sung) else min(dur, rough_at(hi, dur) + 1.0)
+        if w1 - w0 > 179.0:  # never more than the aligner takes
+            w1 = w0 + 179.0
+        chunk = wav[int(w0 * sr):int(w1 * sr)]
+        idx = sung[lo:hi]
+        res = aligner.align(audio=(chunk, sr), text=" ".join(texts[i] for i in idx), language=lang)[0]
+        items, k = list(res.items), 0
+        for pos, i in enumerate(idx, start=lo):
+            n = len(words_of(texts[i]))
+            its = items[k:k + n]
+            k += n
+            if its and a <= pos < b:
+                times[i] = [round(w0 + float(its[0].start_time), 3), round(w0 + float(its[-1].end_time), 3)]
+    # the user's own times always win; keep starts moving forward
+    for i, t in fixed.items():
+        if 0 <= i < len(times):
+            times[i] = [t, None]
+    last = 0.0
+    for i in sung:
+        if times[i] is None:
+            continue
+        if i not in fixed and times[i][0] < last:
+            times[i][0] = last
+        if times[i][1] is not None and times[i][1] < times[i][0]:
+            times[i][1] = times[i][0]
+        last = times[i][0]
+    return {"engine": "qwen-align", "times": times, "heard": sum(1 for i in sung if times[i] and i not in fixed)}
 
 
 def build_segments(text: str, items):

@@ -311,8 +311,19 @@ export function captionChunks(transcript, clip, maxWords = 3) {
 
 // The user's own lyric lines -> caption chunks. Each line is one caption; word
 // times are spread across the line so the highlight sweeps like karaoke.
+// Song-structure labels people paste with lyrics ("[Verse 2 – HOP]", "**Chorus:**").
+// They aren't sung, so they never become captions. "(ooh ooh)" stays a lyric.
+const LABEL_WORDS = /^(intro|outro|verse|chorus|pre-?chorus|post-?chorus|hook|bridge|refrain|interlude|instrumental|break|breakdown|coda|drop|solo|spoken|ad-?libs?)\b[\w\s&'’.,:–—-]{0,40}$/i;
+export function isSectionLabel(text) {
+  const t = String(text || '').trim().replace(/^[*_\s]+|[*_\s]+$/g, '');
+  if (!t) return false;
+  if (t.startsWith('[') && t.endsWith(']')) return true;
+  const core = t.replace(/^[()[\]{}:\-–—\s]+|[()[\]{}:\-–—\s]+$/g, '').replace(/^[*_\s]+|[*_\s]+$/g, '');
+  return LABEL_WORDS.test(core);
+}
+
 export function syncedLyrics(lyrics) {
-  return (lyrics?.lines || []).filter((l) => l.text && Number.isFinite(l.start)).sort((a, b) => a.start - b.start);
+  return (lyrics?.lines || []).filter((l) => l.text && Number.isFinite(l.start) && !isSectionLabel(l.text)).sort((a, b) => a.start - b.start);
 }
 
 export function lyricEnd(lines, i) {
