@@ -57,7 +57,7 @@ export function autoState(fresh) {
       p.lyrics = fresh.lyrics || { lines: [] };
       const r = fresh.lyrics_sync || {};
       if (r.status === 'done') {
-        const parts = [`${r.heard} of ${r.total} lines heard in the song`];
+        const parts = [r.engine === 'whisper' ? `${r.heard} of ${r.total} lines heard in the song` : `${r.heard} of ${r.total} lines timed from the audio`];
         if (r.estimated) parts.push(`${r.estimated} placed between them (grey times, check these)`);
         if (r.kept) parts.push(`${r.kept} of your own times kept`);
         if (r.labels) parts.push(`${r.labels} section label${r.labels > 1 ? 's' : ''} like [Chorus] skipped`);

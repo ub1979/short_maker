@@ -1,4 +1,7 @@
-"""Line up the user's own lyric lines with Whisper's word timings.
+"""Line up the user's own lyric lines with Whisper's word timings (rough pass).
+
+Auto-sync uses this only to find lines Whisper clearly heard; the final times come
+from Whisper forced alignment (transcribe_worker.run_whisper_align).
 
 Whisper on a song is noisy: it misses words, repeats choruses, and may write
 Urdu in Urdu script, Hindi script or English letters. So we:
@@ -37,7 +40,8 @@ _DEV = {
 
 def norm(word: str) -> str:
     s = unicodedata.normalize("NFKD", word.casefold())
-    return "".join(ch for ch in s if unicodedata.category(ch)[0] in "LN")
+    s = "".join(ch for ch in s if unicodedata.category(ch)[0] in "LN")
+    return re.sub(r"(.)\1{2,}", r"\1", s)  # sung stretches: "youuuuu" -> "you"
 
 
 def skeleton(word: str) -> str:

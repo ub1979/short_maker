@@ -433,26 +433,70 @@ def _autosync_whisper(pid: str, project: dict) -> None:
         words.sort(key=lambda w: w["s"])
         segments = [{"words": words}]
 
+        # 1) Rough times: match the lyrics to what Whisper heard. Only lines it clearly
+        #    heard are used, and only to find instrumental breaks in step 2.
+        # 2) Forced alignment: Whisper is handed the exact lines and only finds *when*
+        #    each is sung. This is what puts "Now you..." right before its verb.
+        all_lines = project["lyrics"]["lines"]
+        keep = [i for i, l in enumerate(all_lines) if not is_section_label(l["text"])]
+        mine = {i for i in keep if all_lines[i].get("start") is not None
+                and not all_lines[i].get("heard") and not all_lines[i].get("est")}  # set by the user
+        sung = [dict(all_lines[i], start=all_lines[i]["start"] if i in mine else None, end=None) for i in keep]
+        res = align_lyrics(sung, segments, project["source"]["duration"])
+        rough = [l["start"] if l.get("heard") else None for l in res["lines"]]
+        sung_texts = [all_lines[i]["text"] for i in keep]
+        opts = {"align": True, "lines": sung_texts, "rough": rough,
+                "fixed": {str(k): all_lines[i]["start"] for k, i in enumerate(keep) if i in mine},
+                "language": "ur" if len(rtl) > len(ltr) else ("en" if rtl else None)}
+        out, opt = folder / "lyrics_align.json", folder / "lyrics_align_opts.json"
+        opt.write_text(json.dumps(opts, ensure_ascii=False))
+        r = subprocess.run([sys.executable, "-m", "app.transcribe_worker", str(folder / project["source"]["file"]),
+                            str(out), model, str(opt)],
+                           cwd=store.ROOT, capture_output=True, text=True, timeout=6 * 3600)
+        if r.returncode != 0:
+            tail = [l for l in r.stderr.strip().splitlines() if l.strip()][-1:] or ["unknown error"]
+            raise RuntimeError(tail[0][:300])
+        times = json.loads(out.read_text())["times"]
+        duration = project["source"]["duration"]
+
         def fn(p):
-            all_lines = (p.get("lyrics") or {}).get("lines") or []
-            # section labels ("[Chorus]") aren't sung: leave them out and give them no time
-            keep = [i for i, l in enumerate(all_lines) if not is_section_label(l["text"])]
-            res = align_lyrics([all_lines[i] for i in keep], segments, p["source"]["duration"])
-            merged = [dict(l, start=None, end=None) for l in all_lines]
-            for k, i in enumerate(keep):
-                merged[i] = res["lines"][k]
-            for i, l in enumerate(merged):
-                if i not in keep:
+            cur = (p.get("lyrics") or {}).get("lines") or []
+            if [l["text"] for l in cur] != [l["text"] for l in all_lines]:
+                p["lyrics_sync"] = {"status": "error", "error": "Your lyrics changed while syncing. Press Auto-sync again."}
+                return
+            heard = kept = est = 0
+            for i, l in enumerate(cur):
+                if i not in keep:  # section labels ("[Chorus]") aren't sung: no time, no caption
+                    l.update(start=None, end=None)
                     l.pop("heard", None)
                     l.pop("est", None)
-            res["lines"] = merged
-            lines = merged
-            if not res["heard"] and not res["kept"]:
-                p["lyrics_sync"] = {"status": "error", "error": "Couldn't hear any of your lines in the audio. Try Tap to sync, or a bigger Whisper model in AI & settings."}
+            for k, i in enumerate(keep):
+                l = cur[i]
+                if i in mine:
+                    kept += 1
+                    continue
+                t = times[k] if k < len(times) else None
+                l.pop("est", None)
+                if t:
+                    l.update(start=t[0], end=t[1], heard=True)
+                    heard += 1
+                else:
+                    l.update(start=None, end=None)
+                    l.pop("heard", None)
+            # anything left untimed (end of the audio reached): spread after the last timed line
+            for k, i in enumerate(keep):
+                l = cur[i]
+                if l.get("start") is None:
+                    before = [cur[j]["start"] for j in keep[:k] if cur[j].get("start") is not None]
+                    lo = before[-1] + 1.5 if before else 0.0
+                    l.update(start=round(min(lo, duration), 3), end=None, est=True)
+                    est += 1
+            if not heard and not kept:
+                p["lyrics_sync"] = {"status": "error", "error": "Couldn't place your lines in the audio. Try Tap to sync."}
                 return
-            p["lyrics"] = {"lines": res["lines"], "updated": time.time()}
-            p["lyrics_sync"] = {"status": "done", "engine": "whisper", "heard": res["heard"], "estimated": res["estimated"],
-                                "kept": res["kept"], "labels": len(lines) - len(keep), "total": len(keep), "finished": time.time()}
+            p["lyrics"] = {"lines": cur, "updated": time.time()}
+            p["lyrics_sync"] = {"status": "done", "engine": "whisper-align", "heard": heard, "estimated": est,
+                                "kept": kept, "labels": len(cur) - len(keep), "total": len(keep), "finished": time.time()}
         store.update_project(pid, fn)
     except Exception as e:  # noqa: BLE001
         store.update_project(pid, lambda p: p.update(lyrics_sync={"status": "error", "error": f"Auto-sync failed: {e}"}))
