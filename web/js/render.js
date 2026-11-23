@@ -333,14 +333,26 @@ export function lyricEnd(lines, i) {
   return Math.max(end, l.start + 0.3);
 }
 
+// "No punctuation" captions: drop punctuation and symbols (. , ! ? " … * ( ) ۔ ، ؟ emoji…)
+// but keep apostrophes inside words, so "don't" stays "don't".
+export function plainText(text) {
+  return String(text || '')
+    .replace(/(\p{L})['’](?=\p{L})/gu, '$1\u0000')
+    .replace(/[\p{P}\p{S}]+/gu, ' ')
+    .replace(/\u0000/g, "'")
+    .replace(/\s+/g, ' ').trim();
+}
+
 export function lyricChunks(lyrics, clip) {
   const lines = syncedLyrics(lyrics);
+  const plain = !!lyrics?.plain;
   const dur = clip.end - clip.start;
   const out = [];
   lines.forEach((l, i) => {
     const end = lyricEnd(lines, i);
     if (end <= clip.start || l.start >= clip.end) return;
-    const ws = l.text.split(/\s+/).filter(Boolean);
+    const ws = (plain ? plainText(l.text) : l.text).split(/\s+/).filter(Boolean);
+    if (!ws.length) return;
     const total = ws.reduce((n, w) => n + w.length + 1, 0) || 1;
     let t = l.start;
     const span = (end - l.start) * 0.9; // finish the sweep slightly before the line ends

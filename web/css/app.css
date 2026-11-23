@@ -225,6 +225,8 @@ button { cursor: pointer; }
 .ly-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 8px; align-items: center; }
 .ly-tools .accent-btn { padding: 5px 12px; font-size: 12.5px; }
 .ly-tools .accent-btn.stop { background: var(--red); color: #fff; }
+.ly-plain { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); margin-left: auto; cursor: pointer; user-select: none; }
+.ly-plain input { margin: 0; accent-color: var(--amber); }
 .ly-tools .small.stop { background: var(--red); border-color: var(--red); color: #fff; }
 .ly-autobar { margin: 0 16px 8px; padding: 10px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line2); display: flex; gap: 12px; align-items: center; font-size: 12.5px; }
 .ly-autobar .spin { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 2px solid var(--line2); border-top-color: var(--amber); animation: lyspin .8s linear infinite; }

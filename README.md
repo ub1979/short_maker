@@ -33,6 +33,7 @@ Needs: `ffmpeg` and `uv` (brew install ffmpeg). Transcription uses `mlx-whisper`
    - Or time them by hand with **Tap to sync**: the video plays, and you press `Space` when each line starts (`⌫` undoes a tap, `Esc` stops and ends the last line).
    - You can also type times, set a line to the playhead, or import a timed `.lrc` / `.srt` file. **Export .lrc** saves the lines.
    - On the Short tab, choose **From my lyrics** to use them. The words light up karaoke-style.
+   - Tick **No punctuation** (in My lyrics) to show the captions without punctuation and symbols (`. , ! ? " * …`, Urdu `۔ ، ؟`, emoji). Apostrophes inside words stay ("don't"). Only the captions change; your lyrics text stays as you typed it.
 8. **Fix captions** in "Edit caption text" on the Short tab. Corrections go into the transcript, so every short gets them.
 9. **Render** gives you a 1080×1920 H.264/AAC MP4 that works on all three platforms. The **Post text** tab holds the title, description and hashtags for each platform. The first time you render a video, a Finder window asks **where to save** (change it any time under the Render button, or open the folder). Files are named after the video: `aye watan_r_1.mp4`, `aye watan_r_2.mp4`… where the number is the short's #. Rendering a short again replaces its file. While shorts render, a panel in the bottom-right corner shows each one with a picture, a live bar and where it's saved (Watch, Open folder, Try again). Shrink it to a pill with **–**.
 

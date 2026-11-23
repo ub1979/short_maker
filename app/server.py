@@ -369,6 +369,7 @@ async def put_lyrics(pid: str, request: Request):
     """Your own lyrics/caption lines. start/end are source-video seconds (null = not synced yet)."""
     body = await request.json()
     lines = body.get("lines")
+    plain = body.get("plain")  # captions without punctuation; the text itself is kept as typed
     if not isinstance(lines, list) or len(lines) > 3000:
         raise HTTPException(400, "lines must be a list (max 3000)")
 
@@ -394,7 +395,10 @@ async def put_lyrics(pid: str, request: Request):
                     if line.get(flag) is True:
                         item[flag] = True
             clean.append(item)
+        keep_plain = plain if isinstance(plain, bool) else bool((p.get("lyrics") or {}).get("plain"))
         p["lyrics"] = {"lines": clean, "updated": time.time()}
+        if keep_plain:
+            p["lyrics"]["plain"] = True
         return p["lyrics"]
     return store.update_project(pid, fn)
 
@@ -523,7 +527,7 @@ def _autosync_whisper(pid: str, project: dict) -> None:
             if not heard and not kept:
                 p["lyrics_sync"] = {"status": "error", "error": "Couldn't place your lines in the audio. Try Tap to sync."}
                 return
-            p["lyrics"] = {"lines": cur, "updated": time.time()}
+            p["lyrics"] = {**(p.get("lyrics") or {}), "lines": cur, "updated": time.time()}
             p["lyrics_sync"] = {"status": "done", "engine": "whisper-align", "heard": heard, "estimated": est,
                                 "kept": kept, "labels": len(cur) - len(keep), "total": len(keep), "finished": time.time()}
         store.update_project(pid, fn)

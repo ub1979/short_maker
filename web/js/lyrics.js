@@ -26,6 +26,13 @@ export function initLyrics(c) {
   $('lyFile').onchange = importFile;
   $('lyExport').onclick = exportLrc;
   $('lyAuto').onclick = startAuto;
+  $('lyPlain').onchange = (e) => {
+    if (!ctx.S.project) return;
+    ctx.S.project.lyrics ||= { lines: [] };
+    ctx.S.project.lyrics.plain = e.target.checked;
+    changed(false);
+    toast(e.target.checked ? 'Captions now show no punctuation' : 'Captions show punctuation again');
+  };
 }
 
 // ---------- auto-sync (Whisper + alignment on the server) ----------
@@ -102,7 +109,7 @@ function updateCount() {
 
 const save = debounce(async () => {
   try {
-    const r = await api(`/api/projects/${ctx.S.project.id}/lyrics`, { method: 'PUT', body: { lines: lines() } });
+    const r = await api(`/api/projects/${ctx.S.project.id}/lyrics`, { method: 'PUT', body: { lines: lines(), plain: !!ctx.S.project.lyrics?.plain } });
     ctx.S.project.lyrics.updated = r.updated;
   } catch (e) { toast('Could not save lyrics: ' + e.message, true); }
 }, 400);
@@ -116,6 +123,7 @@ function changed(rerender = true) {
 
 // ---------- list ----------
 export function renderLyrics() {
+  $('lyPlain').checked = !!ctx.S.project?.lyrics?.plain;
   if ($('lyrics').hidden) return;
   const list = $('lyList');
   if (list.contains(document.activeElement) && !sync.active) return; // keep the cursor while typing
