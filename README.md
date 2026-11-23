@@ -14,12 +14,12 @@ Then open http://127.0.0.1:8765. The server runs in the background, so your term
 
 `./start.sh --fg` runs it in the terminal instead (Ctrl+C stops it).
 
-Needs: `ffmpeg` and `uv` (brew install ffmpeg). Transcription uses Qwen3-ASR (PyTorch) and `mlx-whisper`, which needs an Apple Silicon Mac. The first transcription downloads the model (about 2–4 GB for Qwen).
+Needs: `ffmpeg` and `uv` (brew install ffmpeg). Transcription uses `mlx-whisper`, which needs an Apple Silicon Mac, plus Silero VAD. The first transcription downloads the Whisper model.
 
 ## How it works
 
 1. **Upload** a video (mp4, mov, mkv, webm). Files a browser can't play, like HEVC or mkv, get a 720p preview copy. The final render always uses the original file.
-2. **Transcribe** on your Mac with **Qwen3-ASR** (default; best for English and 29 other languages) or **Whisper**. Qwen has no Urdu, so videos with Urdu lyrics (or Urdu speech, which Qwen hears as Hindi) go to Whisper automatically. Pick the engine in AI & settings, or per video next to the Transcribe button. "AI: find best moments" transcribes first if needed. This gives you searchable text, word-timed captions and AI moment-picking.
+2. **Transcribe** on your Mac with **Whisper** (pick the model in AI & settings). Whisper sometimes makes up text over silence or instrumental parts, so **Silero VAD** double-checks it: a line is removed only when Silero hears no voice there *and* Whisper itself said "no speech" or the audio is near silent. Silero alone misses singing over loud music, so it never removes text by itself. Removed lines are listed under the transcript (hover to see them). "AI: find best moments" transcribes first if needed. This gives you searchable text, word-timed captions and AI moment-picking.
 3. **Make shorts** in any of these ways:
    - Press `I` / `O` (or *Start here* / *End here*) at the playhead.
    - Drag the clip edges on the timeline.
@@ -29,7 +29,7 @@ Needs: `ffmpeg` and `uv` (brew install ffmpeg). Transcription uses Qwen3-ASR (Py
 5. **Edit on the preview with the mouse:** hover over the title, channel, links, captions or video and drag it up or down. Click it for **A− / A+** (size), **↕− / ↕+** (line spacing, for captions and title), **Edit** and **Reset**. Double-click to edit: the title right on the preview, the channel and links in Channel & links, a caption at its lyric line or transcript row. The **Edits** switch above the preview decides where moves and Template-tab changes go: **All shorts** (default) or **This short**. Positions and sizes are kept when you switch a short's template, and a new short starts with the layout of the one you're on.
 6. **Channel & links** (logo, name, handle, call to action, links) are saved once and shown on every short.
 7. **Your own lyrics / captions:** open **My lyrics** next to Transcript.
-   - Paste your lines (one caption each), then press **Auto-sync**: for songs in Chinese, Cantonese, English, German, Spanish, French, Italian, Portuguese, Russian, Korean or Japanese, Qwen's forced aligner times your exact lines against the audio (long songs are done in pieces). Songs in any other language, including Urdu or Hindi written in English letters, use Whisper (one pass per language). Section labels like `[Chorus]` are skipped, and removed when you paste. Lines it couldn't hear get grey, guessed times; check those. Times you set yourself are kept.
+   - Paste your lines (one caption each), then press **Auto-sync**: Whisper listens to the song (one pass per language, primed with your lines) and your lines are matched to what it heard. Section labels like `[Chorus]` are skipped, and removed when you paste. Lines it couldn't hear get grey, guessed times; check those. Times you set yourself are kept.
    - Or time them by hand with **Tap to sync**: the video plays, and you press `Space` when each line starts (`⌫` undoes a tap, `Esc` stops and ends the last line).
    - You can also type times, set a line to the playhead, or import a timed `.lrc` / `.srt` file. **Export .lrc** saves the lines.
    - On the Short tab, choose **From my lyrics** to use them. The words light up karaoke-style.

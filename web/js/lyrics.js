@@ -57,7 +57,7 @@ export function autoState(fresh) {
       p.lyrics = fresh.lyrics || { lines: [] };
       const r = fresh.lyrics_sync || {};
       if (r.status === 'done') {
-        const parts = [r.engine === 'qwen' ? `${r.heard} of ${r.total} lines timed from the audio` : `${r.heard} of ${r.total} lines heard in the song`];
+        const parts = [`${r.heard} of ${r.total} lines heard in the song`];
         if (r.estimated) parts.push(`${r.estimated} placed between them (grey times, check these)`);
         if (r.kept) parts.push(`${r.kept} of your own times kept`);
         if (r.labels) parts.push(`${r.labels} section label${r.labels > 1 ? 's' : ''} like [Chorus] skipped`);
@@ -83,7 +83,6 @@ export function showSource(which) {
   $('transcript').hidden = ly;
   $('trSearch').hidden = ly;
   $('transcribeBtn').hidden = ly;
-  $('trEngine').hidden = ly;
   if (ly) renderLyrics();
   else if (sync.active) stopSync();
 }

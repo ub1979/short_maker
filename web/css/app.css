@@ -364,7 +364,6 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line2);
 .savedir { margin-top: 6px; font-size: 11.5px; color: var(--dim); text-align: center; overflow-wrap: anywhere; }
 .savedir b { color: var(--text); font-weight: 600; }
 
-.trengine { width: auto; padding: 4px 6px; font-size: 12px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
 .tr-by { color: var(--dim); font-size: 10.5px; padding: 10px 6px 0; }
 
 /* lyrics paste box: header + big editor mode */

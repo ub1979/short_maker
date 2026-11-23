@@ -85,7 +85,6 @@ async function openProject(id) {
   S.project.lyrics ||= { lines: [] };
   S.chat = [];
   S.suggestAfter = null; // a pending "find moments" belongs to the video it was clicked on
-  $('trEngine').value = 'auto'; // the engine pick is per video; Auto handles Urdu by itself
   resetLyricsView();
   autoState();
   $('chatLog').innerHTML = '';
@@ -174,7 +173,7 @@ function renderTimeline() {
 
 function engineName(model) {
   if (!model) return 'Whisper';
-  if (/^qwen\//i.test(model)) return model.split('/')[1].replace('Qwen3-ASR-', 'Qwen3-ASR ');
+  if (/^qwen\//i.test(model)) return model.split('/')[1].replace('Qwen3-ASR-', 'Qwen3-ASR '); // older transcripts
   return 'Whisper ' + (model.split('/').pop().replace(/^whisper-|-mlx$/g, '') || '');
 }
 
@@ -186,7 +185,7 @@ function renderTranscript() {
   btn.textContent = tr.status === 'done' ? 'Re-transcribe' : 'Transcribe';
   if (tr.status === 'working') {
     const secs = Math.round(Date.now() / 1000 - (tr.started || Date.now() / 1000));
-    box.innerHTML = `<div class="tr-empty"><span class="spin"></span>Transcribing on this Mac with ${esc(engineName(tr.model))}… ${secs}s<br><span class="mono" style="font-size:11px">${tr.why ? `Using it because ${esc(tr.why)}. ` : ''}The first run downloads the model.</span></div>`;
+    box.innerHTML = `<div class="tr-empty"><span class="spin"></span>Transcribing on this Mac with ${esc(engineName(tr.model))}… ${secs}s<br><span class="mono" style="font-size:11px">The first run downloads the model.</span></div>`;
     return;
   }
   if (tr.status === 'error') { box.innerHTML = `<div class="tr-empty" style="color:var(--red)">${esc(tr.error)}</div>`; return; }
@@ -195,7 +194,9 @@ function renderTranscript() {
     return;
   }
   const q = $('trSearch').value.trim().toLowerCase();
-  const by = `<div class="tr-by mono">Transcribed with ${esc(engineName(tr.model))}${tr.language ? ` · ${esc(tr.language)}` : ''}</div>`;
+  const drop = tr.dropped || [];
+  const dropTip = drop.map((d) => `${fmt(d.start)} "${d.text}"`).join('\n');
+  const by = `<div class="tr-by mono">Transcribed with ${esc(engineName(tr.model))}${tr.language ? ` · ${esc(tr.language)}` : ''}${drop.length ? ` · <span title="${esc(dropTip)}">removed ${drop.length} made-up line${drop.length > 1 ? 's' : ''} where Silero VAD heard no voice</span>` : ''}</div>`;
   const segs = tr.segments.filter((s) => !q || s.text.toLowerCase().includes(q));
   box.innerHTML = segs.map((s) => {
     let text = esc(s.text);
@@ -1023,8 +1024,8 @@ function wireStatic() {
       S.suggestAfter = S.project.id;
       if (S.project.transcript?.status !== 'working') {
         try {
-          const r = await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST', body: { engine: $('trEngine').value } });
-          S.project.transcript = { status: 'working', started: Date.now() / 1000, model: r.model, why: r.why };
+          const r = await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST' });
+          S.project.transcript = { status: 'working', started: Date.now() / 1000, model: r.model };
           renderTranscript();
         } catch (e) { S.suggestAfter = null; toast(e.message, true); return; }
       }
@@ -1047,8 +1048,8 @@ function wireStatic() {
   $('transcribeBtn').onclick = async () => {
     try {
       S.suggestAfter = null; // a plain Transcribe shouldn't trigger AI suggestions afterwards
-      const r = await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST', body: { engine: $('trEngine').value } });
-      S.project.transcript = { status: 'working', started: Date.now() / 1000, model: r.model, why: r.why };
+      const r = await api(`/api/projects/${S.project.id}/transcribe`, { method: 'POST' });
+      S.project.transcript = { status: 'working', started: Date.now() / 1000, model: r.model };
       renderTranscript();
     } catch (e) { toast(e.message, true); }
   };

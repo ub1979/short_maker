@@ -92,9 +92,7 @@ def find_clip(project: dict, cid: str) -> dict:
 
 DEFAULT_SETTINGS = {
     "active_connection": "claude",
-    # Transcription engine: Qwen3-ASR (best for English and ~29 languages, no Urdu) or a
-    # Whisper model. whisper_model is always used for Urdu and for lyrics auto-sync.
-    "asr_model": "Qwen/Qwen3-ASR-0.6B",
+    # mlx-whisper model for Transcribe and lyrics auto-sync (Silero VAD guards it).
     "whisper_model": "mlx-community/whisper-small-mlx",
     "connections": [
         {"id": "claude", "name": "Claude (signed-in Claude Code)", "engine": "claude-cli", "model": "claude-sonnet-5-5"},

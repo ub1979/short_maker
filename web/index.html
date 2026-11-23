@@ -77,9 +77,6 @@
       <div class="panel-head transcript-head">
         <div class="srctabs" id="srcTabs"><button data-src="transcript" class="on">Transcript</button><button data-src="lyrics">My lyrics <span class="mono dim" id="lyCount"></span></button></div>
         <input class="search" id="trSearch" placeholder="Search words&hellip;">
-        <select class="small trengine" id="trEngine" title="Which speech-to-text engine to use for this video">
-          <option value="auto">Auto</option><option value="qwen">Qwen</option><option value="whisper">Whisper</option>
-        </select>
         <button class="small" id="transcribeBtn">Transcribe</button>
       </div>
       <div class="transcript" id="transcript"></div>
@@ -92,7 +89,7 @@
           <button class="small" id="lyExport">Export .lrc</button>
           <input type="file" id="lyFile" accept=".lrc,.srt,.txt,.vtt" hidden>
         </div>
-        <div class="ly-autobar" id="lyAutoBar" hidden><span class="spin"></span><div><b>Listening to the song&hellip;</b> Matching your lines to the audio (Qwen for most languages, Whisper for Urdu). Usually under a minute.</div></div>
+        <div class="ly-autobar" id="lyAutoBar" hidden><span class="spin"></span><div><b>Listening to the song&hellip;</b> Matching your lines to the audio with Whisper. Usually under a minute.</div></div>
         <div class="ly-syncbar" id="lySyncBar" hidden>
           <div><b>Syncing.</b> Press <kbd>Space</kbd> (or TAP) the moment each line starts. <kbd>&#9003;</kbd> undo &middot; <kbd>Esc</kbd> stop</div>
           <button class="accent-btn" id="lyTap">TAP</button>
@@ -225,15 +222,7 @@
     <div id="connList"></div>
     <button type="button" class="small" id="addConn">+ Add connection</button>
     <h3>Transcription</h3>
-    <label class="field">Transcription engine (runs on this Mac)
-      <select id="asrModel">
-        <option value="Qwen/Qwen3-ASR-0.6B">Qwen3-ASR 0.6B &middot; best for English and 29 other languages &middot; fast</option>
-        <option value="Qwen/Qwen3-ASR-1.7B">Qwen3-ASR 1.7B &middot; more accurate, slower, bigger download</option>
-        <option value="whisper">Whisper (the model below)</option>
-      </select>
-    </label>
-    <p class="hint">Qwen can't do Urdu. Videos with Urdu lyrics are transcribed with Whisper automatically, and you can pick the engine per video next to the Transcribe button.</p>
-    <label class="field">Whisper model (used for Urdu and for lyrics Auto-sync)
+    <label class="field">Whisper model (runs on this Mac; used for Transcribe and lyrics Auto-sync)
       <select id="whisperModel">
         <option value="mlx-community/whisper-base-mlx">base &middot; fastest</option>
         <option value="mlx-community/whisper-small-mlx">small &middot; balanced</option>
