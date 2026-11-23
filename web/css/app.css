@@ -366,3 +366,10 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line2);
 
 .trengine { width: auto; padding: 4px 6px; font-size: 12px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
 .tr-by { color: var(--dim); font-size: 10.5px; padding: 10px 6px 0; }
+
+/* lyrics paste box: header + big editor mode */
+.ly-paste-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; }
+.ly-paste-head .small { margin-left: auto; }
+.ly-paste.big { position: fixed; inset: 4vh max(16px, 8vw); z-index: 60; padding: 18px 20px; background: var(--bg2, #15161a); border: 1px solid var(--line2); border-radius: 14px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.6), 0 30px 80px rgba(0,0,0,.6); }
+.ly-paste.big .ly-paste-head { font-size: 15px; margin-bottom: 10px; }
+.ly-paste.big textarea { font-size: 18px; line-height: 1.8; padding: 16px 20px; }

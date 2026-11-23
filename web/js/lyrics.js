@@ -13,8 +13,13 @@ export function initLyrics(c) {
   ctx = c;
   $('srcTabs').querySelectorAll('button').forEach((b) => { b.onclick = () => showSource(b.dataset.src); });
   $('lyPaste').onclick = openPaste;
-  $('lyCancel').onclick = () => { $('lyPasteBox').hidden = true; };
+  $('lyCancel').onclick = closePaste;
   $('lyApply').onclick = applyPaste;
+  $('lyBig').onclick = () => setBig(!$('lyPasteBox').classList.contains('big'));
+  $('lyText').addEventListener('input', countLines);
+  $('lyText').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if ($('lyPasteBox').classList.contains('big')) setBig(false); else closePaste(); }
+  });
   $('lySync').onclick = () => { if (sync.active) { lyricsStopButton(); stopSync(); } else startSync(); };
   $('lyTap').onclick = tap;
   $('lyImport').onclick = () => $('lyFile').click();
@@ -84,7 +89,7 @@ export function showSource(which) {
 
 export function resetLyricsView() {
   if (sync.active) stopSync();
-  $('lyPasteBox').hidden = true;
+  closePaste();
   updateCount();
   showSource('transcript');
 }
@@ -182,7 +187,26 @@ export function highlightLyrics() {
 function openPaste() {
   $('lyText').value = lines().map((l) => l.text).join('\n');
   $('lyPasteBox').hidden = false;
+  countLines();
   $('lyText').focus();
+}
+
+function closePaste() {
+  $('lyPasteBox').classList.remove('big');
+  $('lyBig').innerHTML = '&#10530; Big editor';
+  $('lyPasteBox').hidden = true;
+}
+
+// Big editor: the same box, enlarged over the whole window, so long lyrics are easy to read and trim.
+function setBig(on) {
+  $('lyPasteBox').classList.toggle('big', on);
+  $('lyBig').innerHTML = on ? '&#10529; Smaller' : '&#10530; Big editor';
+  $('lyText').focus();
+}
+
+function countLines() {
+  const n = $('lyText').value.split('\n').filter((x) => x.trim()).length;
+  $('lyLines').textContent = n ? `${n} line${n > 1 ? 's' : ''}` : '';
 }
 
 function applyPaste() {
@@ -197,7 +221,7 @@ function applyPaste() {
     return { text, start: null, end: null };
   });
   ctx.S.project.lyrics.lines = next;
-  $('lyPasteBox').hidden = true;
+  closePaste();
   changed();
   const unsynced = next.filter((l) => !Number.isFinite(l.start)).length;
   toast(unsynced ? `${next.length} lines. ${unsynced} need timing — press Tap to sync.` : `${next.length} lines saved`);
@@ -355,7 +379,7 @@ function exportLrc() {
 // Double-click on a caption in the preview: jump to that lyric line and edit it.
 export function focusLyricAt(t) {
   showSource('lyrics');
-  $('lyPasteBox').hidden = true;
+  closePaste();
   const all = lines();
   let idx = -1;
   all.forEach((l, i) => { if (Number.isFinite(l.start) && l.start <= t && (idx < 0 || l.start >= all[idx].start)) idx = i; });
