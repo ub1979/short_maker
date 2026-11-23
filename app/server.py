@@ -621,6 +621,28 @@ async def render_clip(pid: str, cid: str, request: Request):
     return {"status": "queued", "job": job}
 
 
+def _unhide(path: Path) -> None:
+    """macOS marks the ".name.rendering.mp4" temp file hidden (the UF_HIDDEN flag),
+    and the flag survives the rename, so the finished video was invisible in Finder."""
+    import stat as st_mod
+    try:
+        flags = path.stat().st_flags
+        if flags & st_mod.UF_HIDDEN:
+            os.chflags(path, flags & ~st_mod.UF_HIDDEN)
+    except (AttributeError, OSError):
+        pass
+
+
+@app.on_event("startup")
+def _unhide_old_renders() -> None:
+    """Renders made before the fix above are still hidden: unhide them once."""
+    for pj in store.PROJECTS.glob("*/project.json"):
+        for clip in (store.read_json(pj) or {}).get("clips", []):
+            path = (clip.get("render") or {}).get("path")
+            if path:
+                _unhide(Path(path))
+
+
 def _render_job(pid: str, cid: str, job: str, layout: dict, out: Path) -> None:
     folder = store.project_dir(pid)
     layers = folder / "jobs" / job
@@ -646,6 +668,7 @@ def _render_job(pid: str, cid: str, job: str, layout: dict, out: Path) -> None:
                 set_render(progress=round(x, 3))
         media.render_short(folder / project["source"]["file"], tmp, layers, layout, project["source"], prog)
         tmp.replace(out)
+        _unhide(out)
         set_render(status="done", progress=1, file=out.name, path=str(out), finished=time.time())
         shutil.rmtree(layers, ignore_errors=True)
         try:
